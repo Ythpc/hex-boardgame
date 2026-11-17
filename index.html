@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>六边形棋 Hex · 联机版（诊断增强版）</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 8px 8px 20px;
+    background: #0f1024; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    text-align: center;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh;
+  }
+  h1 { margin: 10px 0 6px; font-size: 22px; font-weight: 600; }
+  .rules { font-size: 14px; line-height: 1.7; margin-bottom: 10px; }
+  .red { color: #ff4757; } .blue { color: #3742fa; } .yellow { color: #ffd32a; }
+  .dim { color: #8a8aa0; }
+
+  .panel {
+    width: 100%; max-width: 460px;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 12px; padding: 12px; margin-bottom: 10px; text-align: left;
+  }
+  .panel .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select {
+    flex: 1; min-width: 90px; padding: 10px; font-size: 15px;
+    border-radius: 8px; border: 1px solid rgba(255,255,255,.18);
+    background: #1a1b33; color: #fff; outline: none;
+  }
+  input:focus { border-color: #ff7f50; }
+  button {
+    padding: 10px 16px; font-size: 15px; border: 0; border-radius: 8px;
+    background: #ff7f50; color: #fff; font-weight: 600; cursor: pointer;
+  }
+  button.ghost { background: rgba(255,255,255,.1); font-weight: 500; }
+  button.mini { padding: 7px 12px; font-size: 13px; }
+  button:disabled { opacity: .4; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+  .tabs button { flex: 1; background: rgba(255,255,255,.08); }
+  .tabs button.on { background: #ff7f50; }
+
+  #msg { font-size: 13px; margin-top: 8px; min-height: 18px; line-height: 1.5; }
+  .bad { color: #ff6b6b; } .good { color: #2ecc71; }
+
+  #boardWrap { width: 100%; display: flex; justify-content: center; align-items: flex-start; }
+  svg { display: block; width: 100%; max-width: 440px; height: auto; margin: 0 auto; }
+  .cell { cursor: pointer; }
+  .piece { transition: opacity .2s; }
+
+  #bar {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    margin: 12px 0 6px; flex-wrap: wrap; font-size: 15px;
+  }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+  .dot.on { background: #2ecc71; } .dot.off { background: #666; }
+  #net { font-size: 12px; }
+  .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 8px; }
+  .hint { color: #8a8aa0; font-size: 12px; margin-top: 8px; line-height: 1.6; }
+  #muteBtn { position: fixed; top: 10px; right: 10px; z-index: 9; }
+  details { margin-top: 8px; font-size: 13px; color: #b0b0c4; text-align: left; }
+  summary { cursor: pointer; color: #ffd32a; }
+  code { background: rgba(0,0,0,.4); padding: 2px 5px; border-radius: 4px; font-size: 12px; word-break: break-all; }
+
+  /* 诊断面板 */
+  #diagBox {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 99;
+    max-height: 50vh; overflow-y: auto;
+    background: #1a1a2e; border-top: 1px solid #444;
+    font-size: 11px; font-family: monospace; color: #a0e0a0;
+    padding: 8px 10px; display: none;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #diagBox .err { color: #ff6b6b; }
+  #diagBox .warn { color: #ffd32a; }
+  #diagBox .info { color: #7ec8e3; }
+  #diagToggle {
+    position: fixed; bottom: 10px; left: 10px; z-index: 100;
+    font-size: 11px; padding: 4px 8px; border-radius: 6px;
+  }
+</style>
+</head>
+<body>
+
+<button id="muteBtn" class="ghost mini" onclick="toggleMute()">🔊</button>
+<button id="diagToggle" class="ghost mini" onclick="toggleDiag()">🐛 诊断</button>
+<h1>⬡ 六边形棋 Hex</h1>
+<div class="rules">
+  <span class="red">红方：连通左右</span> · <span class="blue">蓝方：连通上下</span><br>
+  <span class="yellow">没有平局</span> · <span class="dim">只碰一个角不算连上</span>
+</div>
+
+<div class="panel" id="lobby">
+  <div class="tabs">
+    <button id="tabLocal" class="on" onclick="switchTab('local')">单机双人对战</button>
+    <button id="tabNet" onclick="switchTab('net')">线上远程对战</button>
+  </div>
+
+  <div id="localBox">
+    <div class="row">
+      <button class="ghost" style="flex:1" onclick="startLocalGame()">开始单机对战</button>
+    </div>
+    <div class="hint">同一部手机轮流点，适合先熟悉规则。</div>
+  </div>
+
+  <div id="netBox" style="display:none">
+    <div class="row">
+      <select id="colorSel">
+        <option value="R">我当红方（先手）</option>
+        <option value="B">我当蓝方（后手）</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="roomIn" placeholder="房间号，如 friend520" autocomplete="off">
+      <button class="ghost mini" onclick="randomRoom()">随机</button>
+      <button onclick="hostRoom()">创建房间</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" style="flex:1" onclick="joinRoom()">加入房间</button>
+    </div>
+    <div id="msg"></div>
+    <details>
+      <summary>联机配置（首次使用，约 2 分钟，只需做一次）</summary>
+      <p><b>1.</b> Supabase 后台左侧 <b>SQL Editor</b> → New query，把下面整段粘进去，点 <b>Run</b>：</p>
+      <textarea id="sqlText" readonly rows="9" style="width:100%;box-sizing:border-box;font-size:11px;font-family:monospace;background:#0b0c1a;color:#a0e0a0;border:1px solid #334155;border-radius:6px;padding:8px;margin-bottom:8px;">create table if not exists public.hex_rooms (
+  room text primary key,
+  seq int not null default 0,
+  history jsonb not null default '[]'::jsonb,
+  host_red boolean not null default true,
+  version int not null default 1,
+  host_at timestamptz not null default now(),
+  guest_at timestamptz not null default '1970-01-01 00:00:00+00'::timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.hex_rooms enable row level security;
+drop policy if exists hex_rooms_public on public.hex_rooms;
+create policy hex_rooms_public on public.hex_rooms
+  for all to anon, authenticated using (true) with check (true);
+grant all on public.hex_rooms to anon, authenticated;</textarea>
+      <p><b>2.</b> Project Settings → API，复制 <b>Project URL</b> 和 <b>Publishable key</b>。</p>
+      <p><b>3.</b> 粘到下面两格，点<b>保存配置</b>，再点<b>测试连接</b>。<span style="color:#ff6b6b">两台手机必须填同一个项目的 URL 和 Key。</span></p>
+      <div class="row"><input id="cfgUrl" placeholder="Project URL"></div>
+      <div class="row" style="margin-top:6px"><input id="cfgKey" placeholder="Publishable key"></div>
+      <div class="row" style="margin-top:6px">
+        <button class="mini" onclick="saveCfg()">保存配置</button>
+        <button class="mini ghost" onclick="testCfg()">测试连接</button>
+        <button class="mini ghost" onclick="clearCfg()">清除</button>
+      </div>
+      <p style="margin-top:8px">说明：联机用一张极简数据表同步棋谱（每秒自动对齐），<b>不再依赖 WebSocket 广播</b>，微信/夸克/切到后台都能恢复。免费项目一周没人用会暂停，进控制台点恢复即可。</p>
+      <p style="margin-top:6px; color:#ff6b6b;"><b>连不上？</b>点左下角「🐛 诊断」，并核对两台手机状态栏末尾的 <b>#项目代号</b> 是否一致。</p>
+    </details>
+  </div>
+</div>
+
+<div class="panel" id="boardPanel" style="display:none">
+  <div id="boardWrap"><svg id="svg" viewBox="0 0 460 400"></svg></div>
+  <div id="bar"></div>
+  <div id="net"></div>
+  <div class="actions">
+    <button class="ghost mini" onclick="rematch()">再来一局</button>
+    <button class="ghost mini" onclick="backToLobby()">返回大厅</button>
+  </div>
+</div>
+
+<div class="hint">
+  红蓝箭头标出双方要连通的方向，四个角的格子同时属于红边和蓝边。<br>
+  联机时两边都开着页面才能落子，刷新页面会自动重新同步。
+</div>
+
+<!-- 诊断日志面板 -->
+<div id="diagBox"></div>
+
+<!-- Supabase SDK：CDN 加载，带备用源和错误捕获 -->
+<script>
+/* ============================================================
+   0. 诊断日志系统
+   ============================================================ */
+const diagLogs = [];
+function diag(msg, type) {
+  const t = new Date().toTimeString().slice(0, 8);
+  const line = `[${t}] ${msg}`;
+  diagLogs.push({ line, type: type || 'info' });
+  console.log(line);
+  const box = document.getElementById('diagBox');
+  if (box.style.display === 'block') {
+    const span = document.createElement('span');
+    span.className = type || 'info';
+    span.textContent = line + '\n';
+    box.appendChild(span);
+    box.scrollTop = box.scrollHeight;
+  }
+}
+function toggleDiag() {
+  const box = document.getElementById('diagBox');
+  if (box.style.display === 'block') {
+    box.style.display = 'none';
+  } else {
+    box.style.display = 'block';
+    box.innerHTML = '';
+    diagLogs.forEach(({ line, type }) => {
+      const span = document.createElement('span');
+      span.className = type;
+      span.textContent = line + '\n';
+      box.appendChild(span);
+    });
+    box.scrollTop = box.scrollHeight;
+  }
+}
+window.addEventListener('error', e => diag('JS错误: ' + e.message + ' @' + e.lineno, 'err'));
+window.addEventListener('unhandledrejection', e => diag('Promise错误: ' + e.reason, 'err'));
+
+diag('页面加载开始', 'info');
+diag('浏览器: ' + navigator.userAgent.slice(0, 80), 'info');
+diag('在线状态: ' + navigator.onLine, 'info');
+</script>
+
+<!-- Supabase SDK 加载：主 CDN + 备用 CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"
+  onerror="diag('主CDN加载失败，尝试备用...', 'warn'); 
+    var s=document.createElement('script');
+    s.src='https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js';
+    s.onload=function(){diag('备用CDN加载成功','good');window._sdkReady=true;};
+    s.onerror=function(){diag('备用CDN也失败！SDK不可用','err');window._sdkFailed=true;};
+    document.head.appendChild(s);"
+  onload="diag('Supabase SDK 从主CDN加载成功', 'good'); window._sdkReady = true;">
+</script>
+
+<script>
+/* ============================================================
+   1. 棋盘规则（纯逻辑，不依赖界面）
+   ============================================================ */
+const SIZE = 7;
+const EMPTY = 0, RED = 1, BLUE = 2;
+const DIRS = [[1,0],[-1,0],[0,1],[0,-1],[1,-1],[-1,1]];
+
+function newBoard() {
+  return Array.from({length: SIZE}, () => new Array(SIZE).fill(EMPTY));
+}
+function inB(q, r) { return q >= 0 && q < SIZE && r >= 0 && r < SIZE; }
+
+function trace(board, player) {
+  const isRed = player === RED;
+  const key = (q, r) => r * SIZE + q;
+  const seen = new Set();
+  const prev = new Map();
+  const queue = [];
+
+  if (isRed) {
+    for (let r = 0; r < SIZE; r++) {
+      if (board[r][0] === player) { seen.add(key(0, r)); queue.push([0, r]); }
+    }
+  } else {
+    for (let q = 0; q < SIZE; q++) {
+      if (board[0][q] === player) { seen.add(key(q, 0)); queue.push([q, 0]); }
+    }
+  }
+  while (queue.length) {
+    const [q, r] = queue.shift();
+    if (isRed ? q === SIZE - 1 : r === SIZE - 1) {
+      const path = [];
+      let cur = [q, r];
+      while (cur) {
+        path.push(cur);
+        cur = prev.get(key(cur[0], cur[1])) || null;
+      }
+      return { win: true, path: path.reverse() };
+    }
+    for (const [dq, dr] of DIRS) {
+      const nq = q + dq, nr = r + dr;
+      if (!inB(nq, nr) || seen.has(key(nq, nr))) continue;
+      if (board[nr][nq] !== player) continue;
+      seen.add(key(nq, nr));
+      prev.set(key(nq, nr), [q, r]);
+      queue.push([nq, nr]);
+    }
+  }
+  return { win: false, path: [] };
+}
+
+function isFull(board) {
+  for (const row of board) for (const c of row) if (c === EMPTY) return false;
+  return true;
+}
+
+function judge(board) {
+  const red = trace(board, RED);
+  if (red.win) return { winner: RED, path: red.path };
+  const blue = trace(board, BLUE);
+  if (blue.win) return { winner: BLUE, path: blue.path };
+  if (isFull(board)) {
+    return { winner: RED, path: red.path, weird: true };
+  }
+  return { winner: EMPTY, path: [] };
+}
+
+/* ============================================================
+   2. 音效（Web Audio 合成，无外部文件）
+   ============================================================ */
+let audioCtx = null, muted = false;
+function initAudio() {
+  if (!audioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) audioCtx = new AC();
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+// 手机浏览器（尤其微信/夸克）常把 AudioContext 挂起，任何一次触摸都尝试恢复
+document.addEventListener('pointerdown', () => { initAudio(); }, { passive: true });
+document.addEventListener('touchend',     () => { initAudio(); }, { passive: true });
+function tone(freq, type, dur, vol, delay) {
+  if (muted || !audioCtx) return;
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  setTimeout(() => {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(vol, t + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + dur);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(t); osc.stop(t + dur + 0.05);
+  }, delay || 0);
+}
+const sndPlace = () => tone(880, 'sine', 0.12, 0.3, 0);
+const sndJoin  = () => { tone(660, 'sine', 0.1, 0.25, 0); tone(990, 'sine', 0.12, 0.22, 90); };
+const sndWin   = () => [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, 'triangle', 0.32, 0.35, i * 150));
+function toggleMute() {
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  if (!muted) { initAudio(); tone(660, 'sine', 0.1, 0.25, 0); }
+}
+
+/* ============================================================
+   3. 界面绘制
+   ============================================================ */
+const HEX = 27;
+const W = HEX * Math.sqrt(3);
+const PAD_X = 24, PAD_Y = 26;
+const OFF_X = PAD_X + W / 2;
+const OFF_Y = PAD_Y + HEX;
+const COL = { empty: '#2f3542', line: '#57606f', red: '#ff4757', blue: '#3742fa' };
+
+function hexCenter(q, r) {
+  return { x: HEX * Math.sqrt(3) * (q + r / 2) + OFF_X, y: HEX * 1.5 * r + OFF_Y };
+}
+function hexPath(x, y) {
+  let d = '';
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    d += (i ? 'L' : 'M') + (x + HEX * Math.cos(a)).toFixed(2) + ',' + (y + HEX * Math.sin(a)).toFixed(2);
+  }
+  return d + 'Z';
+}
+
+let lastRender = { board: null, path: [] };
+
+function render(state) {
+  const svg = document.getElementById('svg');
+  const board = state.board, path = state.path || [];
+  const pathSet = new Set(path.map(p => p[1] * SIZE + p[0]));
+  let h = '';
+
+  if (path.length > 1) {
+    let d = '';
+    path.forEach(([q, r], i) => {
+      const c = hexCenter(q, r);
+      d += (i ? 'L' : 'M') + c.x.toFixed(2) + ',' + c.y.toFixed(2);
+    });
+    h += `<path d="${d}" fill="none" stroke="#fffa65" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>`;
+  }
+
+  for (let r = 0; r < SIZE; r++) {
+    for (let q = 0; q < SIZE; q++) {
+      const c = hexCenter(q, r);
+      const isL = q === 0, isR = q === SIZE - 1, isT = r === 0, isB = r === SIZE - 1;
+      const v = board[r][q];
+      let fill = COL.empty, stroke = COL.line, sw = 1.2;
+
+      if (isL || isR) { fill = 'rgba(255,71,87,.18)'; stroke = COL.red; sw = 2.4; }
+      if (isT || isB) { fill = 'rgba(55,66,250,.18)'; stroke = COL.blue; sw = 2.4; }
+      if (v === RED)   { fill = COL.red;  stroke = '#fff'; sw = 2; }
+      if (v === BLUE)  { fill = COL.blue; stroke = '#fff'; sw = 2; }
+      if (pathSet.has(r * SIZE + q) && v !== EMPTY) stroke = '#fffa65';
+
+      const d = hexPath(c.x, c.y);
+      const clickable = state.canPlay && v === EMPTY;
+      h += `<path class="${clickable ? 'cell' : ''}" d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"`
+         + (clickable ? ` onclick="humanPlay(${q},${r})"` : '') + '/>';
+
+      if (v !== EMPTY) {
+        h += `<circle class="piece" cx="${c.x}" cy="${c.y}" r="${HEX * 0.42}" fill="rgba(255,255,255,.22)" pointer-events="none"/>`;
+      }
+    }
+  }
+
+  const arrow = (x, y, ch, color) =>
+    `<text x="${x}" y="${y}" fill="${color}" font-size="13" font-weight="700" text-anchor="middle" pointer-events="none">${ch}</text>`;
+  for (let r = 0; r < SIZE; r++) {
+    const l = hexCenter(0, r), rr = hexCenter(SIZE - 1, r);
+    h += arrow(l.x - 19, l.y + 4, '◀', COL.red) + arrow(rr.x + 19, rr.y + 4, '▶', COL.red);
+  }
+  for (let q = 0; q < SIZE; q++) {
+    const t = hexCenter(q, 0), b = hexCenter(q, SIZE - 1);
+    h += arrow(t.x, t.y - 19, '▲', COL.blue) + arrow(b.x, b.y + 30, '▼', COL.blue);
+  }
+  const vbW = PAD_X * 2 + W * SIZE + W / 2 * (SIZE - 1);
+  const vbH = PAD_Y * 2 + HEX * 1.5 * (SIZE - 1) + HEX * 2;
+  svg.setAttribute('viewBox', `0 0 ${vbW.toFixed(2)} ${vbH.toFixed(2)}`);
+  svg.innerHTML = h;
+  lastRender = { board: board.map(r => r.slice()), path };
+}
+
+function setBar(state) {
+  const el = document.getElementById('bar');
+  const name = c => c === RED ? '<span class="red">红方</span>' : '<span class="blue">蓝方</span>';
+  if (state.over) {
+    el.innerHTML = state.winner
+      ? `🎉 ${name(state.winner)}连通，获胜！`
+      : '本局结束';
+  } else {
+    const you = state.turn === state.you && state.you !== EMPTY;
+    el.innerHTML = `${name(state.turn)}落子` + (you ? '（你）' : '（等对方）');
+  }
+}
+
+/* ============================================================
+   4. 游戏控制器
+   ============================================================ */
+class Game {
+  constructor() {
+    this.board = newBoard();
+    this.turn = RED;
+    this.history = [];
+    this.over = false;
+    this.winner = EMPTY;
+    this.path = [];
+    this.you = EMPTY;
+  }
+  get canPlay() {
+    if (this.over) return false;
+    if (this.mode === 'local') return true;
+    return this.turn === this.you;
+  }
+  reset() {
+    this.board = newBoard(); this.turn = RED; this.history = [];
+    this.over = false; this.winner = EMPTY; this.path = [];
+  }
+  play(q, r, who) {
+    if (!inB(q, r) || this.board[r][q] !== EMPTY) return false;
+    if (this.over) return false;
+    if (who !== undefined && who !== this.turn) return false;
+    this.board[r][q] = this.turn;
+    this.history.push([q, r]);
+    const j = judge(this.board);
+    if (j.winner) {
+      this.over = true; this.winner = j.winner; this.path = j.path;
+    } else {
+      this.turn = this.turn === RED ? BLUE : RED;
+    }
+    return true;
+  }
+  applyMove(q, r, color) {
+    if (!inB(q, r) || this.board[r][q] !== EMPTY || this.over) return false;
+    if (color !== this.turn) return false;
+    this.board[r][q] = color;
+    this.history.push([q, r]);
+    const j = judge(this.board);
+    if (j.winner) { this.over = true; this.winner = j.winner; this.path = j.path; }
+    else this.turn = this.turn === RED ? BLUE : RED;
+    return true;
+  }
+  syncFrom(history) {
+    this.reset();
+    for (const [q, r] of history) {
+      if (!inB(q, r) || this.board[r][q] !== EMPTY || this.over) break;
+      this.board[r][q] = this.turn;
+      this.history.push([q, r]);
+      const j = judge(this.board);
+      if (j.winner) { this.over = true; this.winner = j.winner; this.path = j.path; break; }
+      this.turn = this.turn === RED ? BLUE : RED;
+    }
+  }
+}
+let game = new Game();
+let mode = 'local';
+
+function paint() {
+  document.getElementById('boardPanel').style.display = 'block';
+  render(game);
+  setBar(game);
+  const net = document.getElementById('net');
+  if (game.mode !== 'net') { net.innerHTML = ''; return; }
+  const c = loadCfg();
+  let tag = '';
+  const m = (c.url || '').match(/https:\/\/([^.]+)\.supabase\.co/);
+  if (m) tag = m[1].slice(-6);
+  net.innerHTML = `<span class="dim">房间 ${escapeHtml(game.roomId || '')}</span> ·
+     <span class="dim">你执</span>${game.you === RED ? '<span class="red">红方</span>' : '<span class="blue">蓝方</span>'}
+     · <span class="dot ${game.peerOnline ? 'on' : 'off'}"></span><span class="dim">${game.peerOnline ? '对方在线' : '对方离线'}</span>`
+     + (tag ? `<span class="dim"> · #${escapeHtml(tag)}</span>` : '');
+}
+function escapeHtml(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+function humanPlay(q, r) {
+  initAudio();
+  if (!game.canPlay) return;
+  if (game.mode === 'net') {
+    netPlay(q, r);
+    return;
+  }
+  if (game.play(q, r)) {
+    sndPlace();
+    if (game.over) sndWin();
+    paint();
+  }
+}
+
+function startLocalGame() {
+  game = new Game(); game.mode = 'local'; game.you = EMPTY;
+  document.getElementById('lobby').style.display = 'none';
+  paint();
+}
+function rematch() {
+  if (game.mode === 'net') { netRematch(); return; }
+  startLocalGame();
+}
+function backToLobby() {
+  if (typeof stopPolling === 'function') stopPolling();
+  netRoomKey = null; netRole = null;
+  game = new Game();
+  document.getElementById('boardPanel').style.display = 'none';
+  document.getElementById('lobby').style.display = 'block';
+  document.getElementById('msg').textContent = '';
+  paint();
+}
+function switchTab(t) {
+  const local = t === 'local';
+  document.getElementById('tabLocal').classList.toggle('on', local);
+  document.getElementById('tabNet').classList.toggle('on', !local);
+  document.getElementById('localBox').style.display = local ? 'block' : 'none';
+  document.getElementById('netBox').style.display = local ? 'none' : 'block';
+}
+
+/* ============================================================
+   5. 联机：Supabase Realtime Broadcast
+   ============================================================ */
+const SALT = 'hex-game-v1';
+const ROOM_TABLE = 'hex_rooms';
+let sb = null;
+let pollTimer = null, netRole = null, netRoomKey = null, netVersion = -1, prevLen = 0;
+
+function loadCfg() {
+  try {
+    return JSON.parse(localStorage.getItem('hex_cfg') || '{}');
+  } catch (e) { return {}; }
+}
+function saveCfg() {
+  const url = document.getElementById('cfgUrl').value.trim();
+  const key = document.getElementById('cfgKey').value.trim();
+  if (!/^https:\/\/.+\.supabase\.co\/?$/.test(url) || key.length < 20) {
+    setMsg('URL 要以 https:// 开头并以 .supabase.co 结尾，key 也要完整粘贴。', 'bad');
+    diag('配置格式校验失败: url=' + url.slice(0, 40) + ' key长度=' + key.length, 'err');
+    return;
+  }
+  localStorage.setItem('hex_cfg', JSON.stringify({ url: url.replace(/\/$/, ''), key }));
+  // 关键修复：以前改了 URL/Key，旧的 client 还被缓存着，联机一直连旧项目
+  sb = null;
+  if (typeof stopPolling === 'function') stopPolling();
+  setMsg('已保存。', 'good');
+  diag('配置已保存到本地存储，旧连接已作废', 'good');
+}
+function clearCfg() {
+  localStorage.removeItem('hex_cfg');
+  sb = null;
+  if (typeof stopPolling === 'function') stopPolling();
+  document.getElementById('cfgUrl').value = '';
+  document.getElementById('cfgKey').value = '';
+  setMsg('已清除。', 'good');
+  diag('配置已清除', 'info');
+}
+
+/** 测试：直接读数据表，能读到就说明 URL/Key/表/权限全对 */
+async function testCfg() {
+  const c = loadCfg();
+  if (!c.url || !c.key) { setMsg('请先填好再点保存。', 'bad'); return; }
+  setMsg('正在测试数据表…', '');
+  diag('testCfg: 检查 ' + ROOM_TABLE + ' @ ' + c.url, 'info');
+  if (!window.supabase) {
+    setMsg('SDK 未加载，刷新页面重试。', 'bad');
+    diag('window.supabase 不存在', 'err'); return;
+  }
+  try {
+    const client = window.supabase.createClient(c.url, c.key);
+    const { error } = await client.from(ROOM_TABLE).select('room').limit(1);
+    if (error) {
+      let hint = error.message;
+      if (/does not exist|relation|schema cache|not found/i.test(hint)) hint = '表还没建，请先在 SQL Editor 执行上面那段 SQL';
+      else if (/permission|policy|rls|denied|JWT|api key/i.test(hint)) hint = '权限/密钥被拒，确认 policy 已建且 Key 与 URL 是同一项目';
+      setMsg('连上了，但表不可用：' + hint, 'bad');
+      diag('testCfg 读失败: ' + error.message, 'err');
+      return;
+    }
+    // 再测一次写权限：写一条探针再删掉
+    const probe = '__probe__';
+    const { error: wErr } = await client.from(ROOM_TABLE).upsert({
+      room: probe, history: [], version: 1, host_red: true,
+      host_at: new Date().toISOString(), guest_at: new Date(0).toISOString()
+    }, { onConflict: 'room' });
+    if (wErr) {
+      setMsg('读正常但写被拒：' + wErr.message + '（确认 SQL 里的 policy 与 grant 都执行了）', 'bad');
+      diag('testCfg 写失败: ' + wErr.message, 'err');
+      return;
+    }
+    await client.from(ROOM_TABLE).delete().eq('room', probe);
+    setMsg('✅ 连接正常，读写都通过，可以开房间了。', 'good');
+    diag('testCfg 通过（读+写+删）✅', 'good');
+  } catch (e) {
+    setMsg('连接失败：' + e.message, 'bad');
+    diag('testCfg 异常: ' + e.message, 'err');
+  }
+}
+
+function setMsg(t, cls) {
+  const el = document.getElementById('msg');
+  el.textContent = t;
+  el.className = cls || '';
+}
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getSb() {
+  const c = loadCfg();
+  if (!c.url || !c.key) { setMsg('先展开下面的说明，填好 Supabase 配置。', 'bad'); return null; }
+  if (!window.supabase) {
+    setMsg('SDK 加载失败，检查网络后刷新页面。', 'bad');
+    diag('getSb: window.supabase 不存在', 'err');
+    return null;
+  }
+  if (!sb) {
+    try {
+      diag('正在创建 Supabase 客户端...', 'info');
+      diag('URL: ' + c.url, 'info');
+      diag('Key 前缀: ' + c.key.slice(0, 20) + '...', 'info');
+      sb = window.supabase.createClient(c.url, c.key, {
+        realtime: { params: { eventsPerSecond: 5 } }
+      });
+      diag('createClient 成功', 'good');
+    } catch (e) {
+      setMsg('初始化失败：' + e.message, 'bad');
+      diag('createClient 异常: ' + e.message + '\n' + e.stack, 'err');
+      return null;
+    }
+  }
+  return sb;
+}
+
+function joinRoom() { enterRoomNet(false); }
+function hostRoom() { enterRoomNet(true); }
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+async function roomRow(key) {
+  const { data, error } = await sb.from(ROOM_TABLE).select('*').eq('room', key).maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+function otherColor(c) { return c === RED ? BLUE : RED; }
+
+/** 进入房间：房主建记录，房客读记录；之后靠每秒轮询保持同步 */
+async function enterRoomNet(isHost) {
+  initAudio();
+  diag('=== 进入房间（表轮询）=== isHost=' + isHost, 'info');
+  const client = getSb();
+  if (!client) return;
+  const raw = document.getElementById('roomIn').value.trim();
+  if (!/^[A-Za-z0-9_-]{2,24}$/.test(raw)) {
+    setMsg('房间号只能是 2–24 位字母、数字、下划线或短横线。', 'bad'); return;
+  }
+  const pref = document.getElementById('colorSel').value;
+  const hostRed = !(pref === 'B');
+  setMsg('正在连接…', '');
+
+  const key = 'hex-' + (await sha256(SALT + '|' + raw)).slice(0, 16);
+  diag('房间号: ' + raw + ' → 记录 key: ' + key, 'info');
+
+  try {
+    let row;
+    const now = new Date().toISOString();
+    if (isHost) {
+      const { data, error } = await client.from(ROOM_TABLE).upsert({
+        room: key, seq: 0, history: [], host_red: hostRed, version: 1,
+        host_at: now, guest_at: new Date(0).toISOString(), updated_at: now
+      }, { onConflict: 'room' }).select().single();
+      if (error) throw new Error(error.message);
+      row = data;
+      diag('房主已重置房间记录', 'good');
+    } else {
+      row = await roomRow(key);
+      if (!row) {
+        setMsg('房间不存在，请让房主先点「创建房间」。', 'bad');
+        diag('房客加入失败：记录不存在', 'err'); return;
+      }
+      const { data, error } = await client.from(ROOM_TABLE)
+        .update({ guest_at: now }).eq('room', key).select().single();
+      if (error) throw new Error(error.message);
+      row = data;
+      diag('房客已报到', 'good');
+    }
+
+    netRole = isHost ? 'host' : 'guest';
+    netRoomKey = key;
+    netVersion = -1; prevLen = 0;
+    game = new Game();
+    game.mode = 'net';
+    game.roomId = raw;
+    game.isCreator = isHost;
+    game.hostPlaysRed = row.host_red !== false;
+    game.you = isHost ? (game.hostPlaysRed ? RED : BLUE) : otherColor(game.hostPlaysRed ? RED : BLUE);
+    game.peerOnline = false;
+
+    document.getElementById('lobby').style.display = 'none';
+    paint();
+    setMsg('', '');
+    diag('入场成功 · 角色=' + netRole + ' · 颜色=' + (game.you === RED ? '红' : '蓝')
+         + ' · hostRed=' + game.hostPlaysRed, 'good');
+
+    stopPolling();
+    pollTimer = setInterval(poll, 1000);
+    poll();
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    setMsg('连接失败：' + msg, 'bad');
+    diag('enterRoomNet 失败: ' + msg, 'err');
+    if (/does not exist|relation|schema cache|permission|policy|rls/i.test(msg)) {
+      diag('→ 多半是没执行建表 SQL，或 Key 与 URL 不是同一个项目', 'err');
+    }
+  }
+}
+
+/** 每秒一次：刷新自己的心跳 → 读全行 → 对齐棋谱与在线状态 */
+async function poll() {
+  if (!netRoomKey || !sb) return;
+  try {
+    const beat = netRole === 'host' ? 'host_at' : 'guest_at';
+    await sb.from(ROOM_TABLE).update({ [beat]: new Date().toISOString() }).eq('room', netRoomKey);
+
+    const row = await roomRow(netRoomKey);
+    if (!row) throw new Error('房间记录消失');
+
+    // 在线 = 对方心跳在 8 秒内
+    const peerT = new Date(row[netRole === 'host' ? 'guest_at' : 'host_at'] || 0).getTime();
+    const wasOnline = game.peerOnline;
+    game.peerOnline = (Date.now() - peerT) < 8000;
+    if (!wasOnline && game.peerOnline) { sndJoin(); diag('🟢 对方上线', 'good'); }
+    if (wasOnline && !game.peerOnline) diag('⚪ 对方离线', 'warn');
+
+    // 棋谱版本变化 → 用完整棋谱重建，丢包/乱序都不会错
+    if (row.version !== netVersion) {
+      const oldLen = game.history.length;
+      netVersion = row.version;
+      game.hostPlaysRed = row.host_red !== false;
+      game.you = netRole === 'host'
+        ? (game.hostPlaysRed ? RED : BLUE)
+        : otherColor(game.hostPlaysRed ? RED : BLUE);
+      game.syncFrom(Array.isArray(row.history) ? row.history : []);
+      prevLen = game.history.length;
+      if (game.history.length > oldLen) sndPlace();
+      if (game.over) sndWin();
+      diag('同步棋谱 v' + netVersion + ' · ' + game.history.length + ' 手', 'info');
+      paint();
+    } else if (wasOnline !== game.peerOnline) {
+      paint();
+    }
+  } catch (e) {
+    diag('轮询失败: ' + (e && e.message ? e.message : e), 'err');
+  }
+}
+
+function retryRoom() {
+  if (!game.roomId) return backToLobby();
+  const wasHost = game.isCreator;
+  diag('手动重试，角色: ' + (wasHost ? '房主' : '房客'), 'info');
+  enterRoomNet(wasHost);
+}
+function randomRoom() {
+  const s = Math.random().toString(36).slice(2, 8);
+  document.getElementById('roomIn').value = s;
+}
+
+/** 落子：整段棋谱写回表里，对方下一秒轮询到就同步 */
+async function netPlay(q, r) {
+  if (!game || game.mode !== 'net' || !game.canPlay) return;
+  if (!game.play(q, r)) return;
+  sndPlace();
+  if (game.over) sndWin();
+  paint();
+  try {
+    const row = await roomRow(netRoomKey);
+    if (!row) throw new Error('房间记录消失');
+    const v = row.version + 1;
+    const { error } = await sb.from(ROOM_TABLE).update({
+      history: game.history, seq: game.history.length, version: v,
+      updated_at: new Date().toISOString()
+    }).eq('room', netRoomKey);
+    if (error) throw new Error(error.message);
+    netVersion = v;
+    prevLen = game.history.length;
+    diag('落子已写入 v' + v + ' (' + q + ',' + r + ')', 'good');
+  } catch (e) {
+    diag('落子写入失败: ' + (e && e.message ? e.message : e), 'err');
+    setMsg('落子同步失败，请检查网络', 'bad');
+  }
+}
+
+/** 再来一局：直接把表里的棋谱清空，双方轮询到后自动重开 */
+async function netRematch() {
+  try {
+    const row = await roomRow(netRoomKey);
+    if (!row) throw new Error('房间记录消失');
+    const pref = document.getElementById('colorSel').value;
+    const { error } = await sb.from(ROOM_TABLE).update({
+      history: [], seq: 0, version: row.version + 1,
+      host_red: !(pref === 'B'), updated_at: new Date().toISOString()
+    }).eq('room', netRoomKey);
+    if (error) throw new Error(error.message);
+    netVersion = -1; prevLen = 0;
+    document.getElementById('net').innerHTML = '<span class="dim">已重开，正在同步…</span>';
+    diag('已发出再来一局', 'info');
+  } catch (e) {
+    diag('再来一局失败: ' + (e && e.message ? e.message : e), 'err');
+  }
+}
+
+/* 页面切回来立刻对齐一次，不用等下一个轮询周期 */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && netRoomKey && game && game.mode === 'net') {
+    diag('页面恢复，立即同步', 'info');
+    poll();
+  }
+});
+
+/* 网络状态监听 */
+window.addEventListener('online', () => diag('🌐 网络恢复在线', 'good'));
+window.addEventListener('offline', () => diag('🌐 网络断开！', 'err'));
+
+/* 启动时把配置回填到输入框 */
+(function () {
+  const c = loadCfg();
+  if (c.url) document.getElementById('cfgUrl').value = c.url;
+  if (c.key) document.getElementById('cfgKey').value = c.key;
+  diag('配置回填完成', 'info');
+  diag('SDK 状态: ' + (window.supabase ? '已加载 ✅' : '未加载（可能还在下载）'), window.supabase ? 'good' : 'warn');
+  // 延迟再检查一次 SDK
+  setTimeout(() => {
+    diag('SDK 二次检查: ' + (window.supabase ? '已加载 ✅' : '仍未加载 ❌'), window.supabase ? 'good' : 'err');
+    if (!window.supabase) {
+      diag('可能原因: CDN被墙/网络不给力/广告拦截插件阻止了脚本', 'warn');
+    }
+  }, 3000);
+})();
+</script>
+
+</body>
+</html>
